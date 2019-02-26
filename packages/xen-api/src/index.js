@@ -1152,6 +1152,16 @@ export class Xapi extends EventEmitter {
               const value = this[field]
               return value.length === 0 ? value : value.map(getObjectByRef)
             }
+
+            let relationType
+            if (
+              field[field.length - 1] === 's' &&
+              this._types.includes((relationType = field.slice(0, -1)))
+            ) {
+              props[`resolve_${field}`] = function() {
+                return xapi.getRecords(relationType, this[field])
+              }
+            }
           }
 
           props[`add_to_${field}`] = function(...values) {
@@ -1179,6 +1189,12 @@ export class Xapi extends EventEmitter {
           // of a VM created by XenCenter
           getters[$field] = function() {
             return xapi._objectsByRef[this[field]]
+          }
+
+          if (this._types.includes(field)) {
+            props[`resolve_${field}`] = function() {
+              return xapi.getRecord(field, this[field])
+            }
           }
         }
       })
