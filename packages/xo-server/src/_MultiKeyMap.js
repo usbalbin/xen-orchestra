@@ -73,6 +73,10 @@ export default class MultiKeyMap {
     this._root = undefined
   }
 
+  clear() {
+    this._root = undefined
+  }
+
   delete(keys) {
     this._root = del(this._root, 0, keys)
   }

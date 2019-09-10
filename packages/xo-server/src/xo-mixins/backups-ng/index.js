@@ -552,9 +552,10 @@ export default class BackupNg {
 
   constructor(app: any, { backup }) {
     this._app = app
+    this._listingDebounce = parseDuration(backup.listingDebounce)
     this._logger = undefined
     this._runningRestores = new Set()
-    this._backupOptions = backup
+    this._vmBackupSizeTimeout = parseDuration(backup.vmBackupSizeTimeout)
 
     app.on('start', async () => {
       this._logger = await app.getLogger('restore')
@@ -771,6 +772,8 @@ export default class BackupNg {
     } else {
       throw new Error(`no deleter for backup mode ${metadata.mode}`)
     }
+
+    this._listVmBackupsOnRemote(REMOVE_CACHE_ENTRY, remoteId)
   }
 
   // Task logs emitted in a restore execution:
@@ -822,9 +825,14 @@ export default class BackupNg {
     )()
   }
 
-  @debounceWithKey.decorate(10e3, function keyFn(remoteId) {
-    return [this, remoteId]
-  })
+  @debounceWithKey.decorate(
+    function delayFn() {
+      return this._listingDebounce
+    },
+    function keyFn(remoteId) {
+      return [this, remoteId]
+    }
+  )
   async _listVmBackupsOnRemote(remoteId: string) {
     const app = this._app
     const backupsByVm = {}
@@ -1844,7 +1852,7 @@ export default class BackupNg {
               metadata.size = await timeout
                 .call(
                   handler.getSize(resolveRelativeFromFile(path, metadata.xva)),
-                  parseDuration(this._backupOptions.vmBackupSizeTimeout)
+                  this._vmBackupSizeTimeout
                 )
                 .catch(err => {
                   log.warn(`_listVmBackups, getSize`, { err })
