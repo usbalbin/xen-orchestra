@@ -17,6 +17,9 @@ const { debug, warn } = createLogger('xo:proxy:backups:VmBackup')
 // in case of error in the new readable stream, it will simply be unpiped
 // from the original one
 const forkStreamUnpipe = stream => {
+  const { forks = 0} = stream
+  stream.forks = forks + 1
+
   const proxy = new PassThrough()
   stream.pipe(proxy)
   eos(stream, error => {
@@ -25,6 +28,7 @@ const forkStreamUnpipe = stream => {
     }
   })
   eos(proxy, _ => {
+    stream.forks--
     stream.unpipe(proxy)
   })
   return proxy

@@ -6,6 +6,7 @@ import asyncMap from '@xen-orchestra/async-map'
 import createLogger from '@xen-orchestra/log'
 import defer from 'golike-defer'
 import limitConcurrency from 'limit-concurrency-decorator'
+import pump from 'pump'
 import safeTimeout from 'strict-timeout/safe'
 import { type Pattern, createPredicate } from 'value-matcher'
 import { type Readable, PassThrough } from 'stream'
@@ -32,6 +33,7 @@ import {
 } from 'lodash'
 import {
   CancelToken,
+  fromCallback,
   ignoreErrors,
   pFinally,
   pFromEvent,
@@ -331,11 +333,12 @@ const writeStream = async (
   const tmpPath = `${dirname(path)}/.${basename(path)}`
   const output = await handler.createOutputStream(tmpPath, { checksum })
   try {
-    input.pipe(output)
-    await pFromEvent(output, 'finish')
-    await output.checksumWritten
-    // $FlowFixMe
-    await input.task
+    await Promise.all([
+      fromCallback(pump, input, output),
+      output.checksumWritten,
+      // $FlowFixMe
+      input.task,
+    ])
     await handler.rename(tmpPath, path, { checksum })
   } catch (error) {
     await handler.unlink(tmpPath, { checksum })
