@@ -8,8 +8,10 @@ import { filter, find, forOwn, map, omitBy } from 'lodash'
 import { fromCallback, promisify } from 'promise-toolbox'
 import { join } from 'path'
 
+import { OpenFlowChannel } from './protocol/openflow-channel'
 import { OvsdbClient } from './protocol/ovsdb-client'
 import { PrivateNetwork } from './private-network/private-network'
+import { TlsHelper } from './utils/tls-helper'
 
 // =============================================================================
 
@@ -312,6 +314,10 @@ class SDNController extends EventEmitter {
   - `status`:
     - `active`: `true` if the corresponding OpenVSwitch bridge is correctly configured and working
     - `key`   : Corresponding OpenVSwitch bridge name (missing if `active` is `false`)
+
+  Attributes on VIFs (OpenFlow entries):
+  - `other_config`:
+    - `xo:sdn-controller:of-rules`: A list of openflow entries to aply to this VIF
   */
 
   constructor({ xo, getDataDir }) {
@@ -335,6 +341,9 @@ class SDNController extends EventEmitter {
     this._prevVni = 0
 
     this.ovsdbClients = {}
+    this.ofChannels = {}
+
+    this._tlsHelper = new TlsHelper()
   }
 
   // ---------------------------------------------------------------------------
@@ -369,10 +378,11 @@ class SDNController extends EventEmitter {
       fileRead(join(certDirectory, CLIENT_CERT)),
       fileRead(join(certDirectory, CA_CERT)),
     ])
-
-    forOwn(this.ovsdbClients, client => {
-      client.updateCertificates(this._clientKey, this._clientCert, this._caCert)
-    })
+    this._tlsHelper.updateCertificates(
+      this._clientKey,
+      this._clientCert,
+      this._caCert
+    )
     const updatedPools = []
     await Promise.all(
       map(this.privateNetworks, async privateNetworks => {
@@ -390,7 +400,8 @@ class SDNController extends EventEmitter {
   }
 
   async load() {
-    // Expose method to create private network
+    // ---------------- Private Network method ---------------------------------
+
     const createPrivateNetwork = params =>
       this._createPrivateNetwork({
         encrypted: false,
@@ -422,9 +433,37 @@ class SDNController extends EventEmitter {
       preferredCenterId: { type: 'string', optional: true },
     }
 
+    // ---------------- OpenFlow rules method ----------------------------------
+
+    const addRule = params => this._addRule(params)
+    addRule.description = 'Add a rule to a VIF'
+    addRule.params = {
+      allow: { type: 'boolean' },
+      vifId: { type: 'string' },
+      protocol: { type: 'string' },
+      port: { type: 'integer' },
+      ipRange: { type: 'string' },
+      direction: { type: 'string' },
+    }
+
+    const deleteRule = params => this._deleteRule(params)
+    deleteRule.description = 'Delete a rule from a VIF'
+    deleteRule.params = {
+      vifId: { type: 'string' },
+      protocol: { type: 'string' },
+      port: { type: 'integer' },
+      ipRange: { type: 'string' },
+      direction: { type: 'string' },
+    }
+
+    // -------------------------------------------------------------------------
+
     this._unsetApiMethods = this._xo.addApiMethods({
       sdnController: {
         createPrivateNetwork,
+
+        addRule,
+        deleteRule,
       },
     })
 
@@ -456,6 +495,7 @@ class SDNController extends EventEmitter {
     this._cleaners = []
 
     this.ovsdbClients = {}
+    this.ofChannels = {}
 
     this._unsetApiMethods()
   }
@@ -483,7 +523,8 @@ class SDNController extends EventEmitter {
       this._cleaners.push(await this._manageXapi(xapi))
       const hosts = filter(xapi.objects.all, { $type: 'host' })
       for (const host of hosts) {
-        this._createOvsdbClient(host)
+        this._getOrCreateOvsdbClient(host)
+        this._getOrCreateOfChannel(host)
       }
 
       // Add already existing private networks
@@ -596,6 +637,37 @@ class SDNController extends EventEmitter {
           await this._electNewCenter(privateNetwork)
         })
       )
+
+      // -----------------------------------------------------------------------
+
+      const vifs = filter(xapi.objects.all, { $type: 'VIF' })
+      await Promise.all(vifs.map(vif => this._applyVifOfRules(vif)))
+
+      // TODO: REMOVE ME WHEN UI ALLOW TO ADD/DELETE RULES
+      /*
+      setTimeout(() => {
+        const vifs = filter(xapi.objects.all, { $type: 'VIF' })
+        const vif = vifs[0]
+        this._addRule({
+          allow: false,
+          vifId: vif.$id,
+          protocol: 'ICMP',
+          // port: 5060,
+          ipRange: '192.168.42.42/17',
+          direction: 'from',
+        })
+
+        setTimeout(() => {
+          this._deleteRule({
+            vifId: vif.$id,
+            protocol: 'ICMP',
+            port: 5060,
+            ipRange: '192.168.42.42/17',
+            direction: 'from',
+          })
+        }, 10000)
+      }, 5000)
+*/
     } catch (error) {
       log.error('Error while handling xapi connection', {
         id: xapi.pool.uuid,
@@ -632,6 +704,73 @@ class SDNController extends EventEmitter {
 
   // ===========================================================================
 
+  async _addRule({ allow, vifId, protocol, port, ipRange, direction }) {
+    const vif = this._xo.getXapiObject(this._xo.getObject(vifId, 'VIF'))
+    assert(vif.currently_attached, 'VIF needs to be plugged to add rule')
+    await this._setPoolControllerIfNeeded(vif.$pool)
+
+    const client = this._getOrCreateOvsdbClient(vif.$VM.$resident_on)
+    const channel = this._getOrCreateOfChannel(vif.$VM.$resident_on)
+    const ofport = await client.getOfPortForVif(vif)
+    await channel.addRule(
+      vif,
+      allow,
+      protocol,
+      port,
+      ipRange,
+      direction,
+      ofport
+    )
+    const vifRules = vif.other_config['xo:sdn-controller:of-rules']
+    const newVifRules = vifRules !== undefined ? JSON.parse(vifRules) : []
+    const stringRule = JSON.stringify({
+      allow,
+      protocol,
+      port,
+      ipRange,
+      direction,
+    })
+    if (!newVifRules.includes(stringRule)) {
+      newVifRules.push(stringRule)
+      vif.update_other_config(
+        'xo:sdn-controller:of-rules',
+        JSON.stringify(newVifRules)
+      )
+    }
+  }
+
+  async _deleteRule({ vifId, protocol, port, ipRange, direction }) {
+    const vif = this._xo.getXapiObject(this._xo.getObject(vifId, 'VIF'))
+    assert(vif.currently_attached, 'VIF needs to be plugged to delete rule')
+    await this._setPoolControllerIfNeeded(vif.$pool)
+
+    const client = this._getOrCreateOvsdbClient(vif.$VM.$resident_on)
+    const channel = this._getOrCreateOfChannel(vif.$VM.$resident_on)
+    const ofport = await client.getOfPortForVif(vif)
+    await channel.deleteRule(vif, protocol, port, ipRange, direction, ofport)
+    const vifRules = vif.other_config['xo:sdn-controller:of-rules']
+    if (vifRules === undefined) {
+      // Nothing to do
+      return
+    }
+
+    const newVifRules = omitBy(JSON.parse(vifRules), vifRule => {
+      const rule = JSON.parse(vifRule)
+      return (
+        rule.protocol === protocol &&
+        rule.port === port &&
+        rule.ipRange === ipRange &&
+        rule.direction === direction
+      )
+    })
+    vif.update_other_config(
+      'xo:sdn-controller:of-rules',
+      Object.keys(newVifRules).length === 0 ? null : JSON.stringify(newVifRules)
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+
   async _createPrivateNetwork({
     poolIds,
     pifIds,
@@ -661,8 +800,6 @@ class SDNController extends EventEmitter {
 
     const privateNetwork = new PrivateNetwork(this, uuidv4(), preferredCenter)
     for (const pool of pools) {
-      await this._setPoolControllerIfNeeded(pool)
-
       const pifId = pifIds.find(id => {
         const pif = this._xo.getXapiObject(this._xo.getObject(id, 'PIF'))
         return pif.$pool.$ref === pool.$ref
@@ -703,9 +840,11 @@ class SDNController extends EventEmitter {
       await Promise.all(
         map(hosts, async host => {
           await createTunnel(host, createdNetwork)
-          this._createOvsdbClient(host)
+          this._getOrCreateOvsdbClient(host)
+          this._getOrCreateOfChannel(host)
         })
       )
+      await this._setPoolControllerIfNeeded(pool)
 
       await privateNetwork.addNetwork(createdNetwork)
       this._networks.set(createdNetwork.$id, createdNetwork.$ref)
@@ -738,7 +877,7 @@ class SDNController extends EventEmitter {
   }
 
   _objectsAdded(objects) {
-    forOwn(objects, object => {
+    forOwn(objects, async object => {
       const { $type } = object
 
       if ($type === 'host') {
@@ -750,7 +889,18 @@ class SDNController extends EventEmitter {
         if (!this._newHosts.some(_ => _.$ref === object.$ref)) {
           this._newHosts.push(object)
         }
-        this._createOvsdbClient(object)
+        this._getOrCreateOvsdbClient(object)
+        this._getOrCreateOfChannel(object)
+      } else if ($type === 'PIF') {
+        log.debug('New PIF', {
+          device: object.device,
+          host: object.$host.name_label,
+          network: object.$network.name_label,
+          pool: object.$pool.name_label,
+        })
+
+        const client = this.ovsdbClients[object.host]
+        client.setBridgeControllerForNetwork(object.$network)
       }
     })
   }
@@ -781,6 +931,10 @@ class SDNController extends EventEmitter {
         this.ovsdbClients = omitBy(
           this.ovsdbClients,
           client => client.host.$id === id
+        )
+        this.ofChannels = omitBy(
+          this.ofChannels,
+          channel => channel.host.$id === id
         )
 
         // If a Star center host is removed: re-elect a new center where needed
@@ -898,6 +1052,8 @@ class SDNController extends EventEmitter {
       })
     }
 
+    this._setBridgeControllerForHost(host)
+
     const privateNetworks = filter(
       this.privateNetworks,
       privateNetwork => privateNetwork[host.$pool.uuid] !== undefined
@@ -948,7 +1104,18 @@ class SDNController extends EventEmitter {
       })
     }
 
+    const hosts = filter(pool.$xapi.objects.all, { $type: 'host' })
+    await Promise.all(
+      hosts.map(host => {
+        return this._setBridgeControllerForHost(host)
+      })
+    )
     this._cleaners.push(await this._manageXapi(pool.$xapi))
+  }
+
+  _setBridgeControllerForHost(host) {
+    const client = this.ovsdbClients[host.$ref]
+    return client.setBridgeController()
   }
 
   // ---------------------------------------------------------------------------
@@ -1116,18 +1283,37 @@ class SDNController extends EventEmitter {
 
   // ---------------------------------------------------------------------------
 
-  _createOvsdbClient(host) {
-    if (this.ovsdbClients[host.$ref] !== undefined) {
-      return
+  async _applyVifOfRules(vif) {
+    const vifRules = vif.other_config['xo:sdn-controller:of-rules']
+    const newVifRules = vifRules !== undefined ? JSON.parse(vifRules) : []
+    await Promise.all(
+      newVifRules.map(async stringRule => {
+        const rule = JSON.parse(stringRule)
+        await this._addRule({ ...rule, vifId: vif.$id })
+      })
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+
+  _getOrCreateOvsdbClient(host) {
+    let client = this.ovsdbClients[host.$ref]
+    if (client === undefined) {
+      client = new OvsdbClient(host, this._tlsHelper)
+      this.ovsdbClients[host.$ref] = client
     }
 
-    const client = new OvsdbClient(
-      host,
-      this._clientKey,
-      this._clientCert,
-      this._caCert
-    )
-    this.ovsdbClients[host.$ref] = client
+    return client
+  }
+
+  _getOrCreateOfChannel(host) {
+    let channel = this.ofChannels[host.$ref]
+    if (channel === undefined) {
+      channel = new OpenFlowChannel(host, this._tlsHelper)
+      this.ofChannels[host.$ref] = channel
+    }
+
+    return channel
   }
 }
 
