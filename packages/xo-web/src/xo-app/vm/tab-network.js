@@ -60,6 +60,7 @@ import {
   isVmRunning,
   setVif,
   subscribeIpPools,
+  subscribePlugins,
   subscribeResourceSets,
 } from 'xo'
 
@@ -386,10 +387,17 @@ class NewAclRuleForm extends BaseComponent {
     )
   }
 }
+
+@addSubscriptions({
+  plugins: subscribePlugins,
+})
 class AclRuleItem extends Component {
   render() {
-    const { rule, vif } = this.props
+    const { rule, vif, plugins } = this.props
     const ruleObj = JSON.parse(rule)
+    const sdnControllerLoaded = plugins.some(
+      plugin => plugin.name === 'sdn-controller' && plugin.loaded
+    )
 
     return (
       <tr>
@@ -403,7 +411,10 @@ class AclRuleItem extends Component {
             handler={deleteAclRule}
             handlerParam={{ ...ruleObj, vif }}
             icon='delete'
-            tooltip={_('deleteRule')}
+            disabled={!sdnControllerLoaded}
+            tooltip={
+              sdnControllerLoaded ? _('deleteRule') : _('noAclRuleReason')
+            }
             level='danger'
           />
         </td>
@@ -412,6 +423,9 @@ class AclRuleItem extends Component {
   }
 }
 
+@addSubscriptions({
+  plugins: subscribePlugins,
+})
 class AclRulesItems extends BaseComponent {
   newAclRule(vif) {
     return confirm({
@@ -438,8 +452,11 @@ class AclRulesItems extends BaseComponent {
   }
 
   render() {
-    const { vif } = this.props
+    const { vif, plugins } = this.props
     const { showRules } = this.state
+    const sdnControllerLoaded = plugins.some(
+      plugin => plugin.name === 'sdn-controller' && plugin.loaded
+    )
 
     return (
       <div>
@@ -454,7 +471,8 @@ class AclRulesItems extends BaseComponent {
           handler={this.newAclRule}
           handlerParam={vif}
           icon='add'
-          tooltip={_('addRule')}
+          disabled={!sdnControllerLoaded}
+          tooltip={sdnControllerLoaded ? _('addRule') : _('noAclRuleReason')}
         />
         {showRules && (
           <table className='table'>
