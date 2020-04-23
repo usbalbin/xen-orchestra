@@ -324,6 +324,12 @@ class NewAclRuleForm extends BaseComponent {
 
   render() {
     const { protocol, allow, port, ipRange, direction } = this.state
+    const showIpRange = protocol != null
+    const showPort =
+      showIpRange &&
+      (protocol.value === 'TCP' ||
+        protocol.value === 'UDP' ||
+        protocol.value === 'ICMP')
     return (
       <form id='newAclForm'>
         <fieldset className='form-inline'>
@@ -343,21 +349,25 @@ class NewAclRuleForm extends BaseComponent {
               value={protocol}
             />
             {_('aclRuleProtocol')}
-            <input
-              type='number'
-              value={port}
-              min='1'
-              onChange={this.linkState('port')}
-              className='form-control'
-            />
-            {_('aclRulePort')}
-            <input
-              type='text'
-              value={ipRange}
-              onChange={this.linkState('ipRange')}
-              className='form-control'
-            />
-            {_('aclRuleIpRange')}
+            {showPort && (
+              <input
+                type='number'
+                value={port}
+                min='1'
+                onChange={this.linkState('port')}
+                className='form-control'
+              />
+            )}
+            {showPort && _('aclRulePort')}
+            {showIpRange && (
+              <input
+                type='text'
+                value={ipRange}
+                onChange={this.linkState('ipRange')}
+                className='form-control'
+              />
+            )}
+            {showIpRange && _('aclRuleIpRange')}
             <Select
               name='direction'
               onChange={this.linkState('direction')}
@@ -408,16 +418,23 @@ class AclRulesItems extends BaseComponent {
       icon: 'add',
       title: _('addRule'),
       body: <NewAclRuleForm />,
-    }).then(({ allow, protocol, port, ipRange, direction }) =>
-      addAclRule({
+    }).then(({ allow, protocol, port, ipRange, direction }) => {
+      const hasProtocol = protocol != null
+      const usePort =
+        hasProtocol &&
+        (protocol.value === 'TCP' ||
+          protocol.value === 'UDP' ||
+          protocol.value === 'ICMP') &&
+        port !== undefined
+      return addAclRule({
         allow,
-        protocol: protocol !== undefined ? protocol.value : undefined,
-        port: port !== undefined ? +port : undefined,
-        ipRange,
+        protocol: hasProtocol ? protocol.value : undefined,
+        port: usePort ? +port : undefined,
+        ipRange: hasProtocol ? ipRange : '',
         direction: direction.value,
         vif,
       })
-    )
+    })
   }
 
   render() {
