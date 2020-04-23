@@ -748,7 +748,7 @@ class SDNController extends EventEmitter {
     { vifId, protocol = undefined, port = undefined, ipRange = '', direction },
     updateOtherConfig = true
   ) {
-    const vif = this._xo.getXapiObject(this._xo.getObject(vifId, 'VIF'))
+    let vif = this._xo.getXapiObject(this._xo.getObject(vifId, 'VIF'))
     try {
       await this._setPoolControllerIfNeeded(vif.$pool)
 
@@ -781,6 +781,8 @@ class SDNController extends EventEmitter {
           ? null
           : JSON.stringify(newVifRules)
       )
+
+      vif = await vif.$xapi.barrier(vif.$ref)
 
       // Put back rules that could have been wrongfully deleted because delete rule too general
       await this._applyVifOfRules(vif)
