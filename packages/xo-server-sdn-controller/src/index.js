@@ -726,7 +726,7 @@ class SDNController extends EventEmitter {
       })
       if (!newVifRules.includes(stringRule)) {
         newVifRules.push(stringRule)
-        vif.update_other_config(
+        await vif.update_other_config(
           'xo:sdn-controller:of-rules',
           JSON.stringify(newVifRules)
         )
@@ -775,7 +775,8 @@ class SDNController extends EventEmitter {
           rule.direction !== direction
         )
       })
-      vif.update_other_config(
+
+      await vif.update_other_config(
         'xo:sdn-controller:of-rules',
         Object.keys(newVifRules).length === 0
           ? null

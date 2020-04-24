@@ -37,6 +37,7 @@ import {
   isEmpty,
   keys,
   map,
+  pick,
   remove,
   some,
 } from 'lodash'
@@ -309,6 +310,7 @@ class VifStatus extends BaseComponent {
 
 // -----------------------------------------------------------------------------
 
+const USABLE_PORT_PROTOCOL = ['TCP', 'ICMP', 'UDP']
 class NewAclRuleForm extends BaseComponent {
   state = {
     allow: true,
@@ -319,18 +321,21 @@ class NewAclRuleForm extends BaseComponent {
   }
 
   get value() {
-    const { allow, protocol, port, ipRange, direction } = this.state
-    return { allow, protocol, port, ipRange, direction }
+    return pick(this.state, [
+      'allow',
+      'protocol',
+      'port',
+      'ipRange',
+      'direction',
+    ])
   }
 
   render() {
     const { protocol, allow, port, ipRange, direction } = this.state
     const showIpRange = protocol != null
     const showPort =
-      showIpRange &&
-      (protocol.value === 'TCP' ||
-        protocol.value === 'UDP' ||
-        protocol.value === 'ICMP')
+      showIpRange && USABLE_PORT_PROTOCOL.includes(protocol.value)
+
     return (
       <form id='newAclForm'>
         <fieldset className='form-inline'>
@@ -350,25 +355,27 @@ class NewAclRuleForm extends BaseComponent {
               value={protocol}
             />
             {_('aclRuleProtocol')}
-            {showPort && (
+            {showPort && [
               <input
-                type='number'
-                value={port}
+                className='form-control'
+                key='key'
                 min='1'
                 onChange={this.linkState('port')}
-                className='form-control'
-              />
-            )}
-            {showPort && _('aclRulePort')}
-            {showIpRange && (
+                type='number'
+                value={port}
+              />,
+              _('aclRulePort'),
+            ]}
+            {showIpRange && [
               <input
+                className='form-control'
+                key='key'
+                onChange={this.linkState('ipRange')}
                 type='text'
                 value={ipRange}
-                onChange={this.linkState('ipRange')}
-                className='form-control'
-              />
-            )}
-            {showIpRange && _('aclRuleIpRange')}
+              />,
+              _('aclRuleIpRange'),
+            ]}
             <Select
               name='direction'
               onChange={this.linkState('direction')}
@@ -391,7 +398,7 @@ class NewAclRuleForm extends BaseComponent {
 @addSubscriptions({
   plugins: subscribePlugins,
 })
-class AclRuleItem extends Component {
+class AclRuleRow extends Component {
   render() {
     const { rule, vif, plugins } = this.props
     const ruleObj = JSON.parse(rule)
@@ -408,14 +415,14 @@ class AclRuleItem extends Component {
         <td>{ruleObj.direction}</td>
         <td className='text-xs-right'>
           <ActionRowButton
+            disabled={!sdnControllerLoaded}
             handler={deleteAclRule}
             handlerParam={{ ...ruleObj, vif }}
             icon='delete'
-            disabled={!sdnControllerLoaded}
+            level='danger'
             tooltip={
               sdnControllerLoaded ? _('deleteRule') : _('noAclRuleReason')
             }
-            level='danger'
           />
         </td>
       </tr>
@@ -426,8 +433,8 @@ class AclRuleItem extends Component {
 @addSubscriptions({
   plugins: subscribePlugins,
 })
-class AclRulesItems extends BaseComponent {
-  newAclRule(vif) {
+class AclRulesRows extends BaseComponent {
+  _newAclRule(vif) {
     return confirm({
       icon: 'add',
       title: _('addRule'),
@@ -436,10 +443,9 @@ class AclRulesItems extends BaseComponent {
       const hasProtocol = protocol != null
       const usePort =
         hasProtocol &&
-        (protocol.value === 'TCP' ||
-          protocol.value === 'UDP' ||
-          protocol.value === 'ICMP') &&
+        USABLE_PORT_PROTOCOL.includes(protocol.value) &&
         port !== undefined
+
       return addAclRule({
         allow,
         protocol: hasProtocol ? protocol.value : undefined,
@@ -451,30 +457,43 @@ class AclRulesItems extends BaseComponent {
     })
   }
 
+  _getRules = createSelector(
+    () => this.props.vif.other_config['xo:sdn-controller:of-rules'],
+    json => (json !== undefined ? JSON.parse(json) : undefined)
+  )
+
   render() {
     const { vif, plugins } = this.props
     const { showRules } = this.state
     const sdnControllerLoaded = plugins.some(
       plugin => plugin.name === 'sdn-controller' && plugin.loaded
     )
+    const rules = this._getRules()
+    const rulesToSee = rules !== undefined
 
     return (
       <div>
-        {vif.other_config['xo:sdn-controller:of-rules'] !== undefined && (
+        {rulesToSee && (
           <ActionButton
+            btnStyle='success'
+            className='mb-1 pull-right'
             handler={this.toggleState('showRules')}
             icon={showRules ? 'hidden' : 'shown'}
+            size='small'
             tooltip={showRules ? _('hideRules') : _('showRules')}
           />
         )}
         <ActionButton
-          handler={this.newAclRule}
+          btnStyle='success'
+          className='mb-1 pull-right'
+          disabled={!sdnControllerLoaded}
+          handler={this._newAclRule}
           handlerParam={vif}
           icon='add'
-          disabled={!sdnControllerLoaded}
+          size='small'
           tooltip={sdnControllerLoaded ? _('addRule') : _('noAclRuleReason')}
         />
-        {showRules && (
+        {showRules && rulesToSee && (
           <table className='table'>
             <thead className='thead-default'>
               <tr>
@@ -488,11 +507,11 @@ class AclRulesItems extends BaseComponent {
             </thead>
             <tbody>
               {map(
-                JSON.parse(vif.other_config['xo:sdn-controller:of-rules']),
-                rule => (
-                  <AclRuleItem rule={rule} vif={vif} />
-                )
+                rules,
+                rule =>
+                  rule !== undefined && <AclRuleRow rule={rule} vif={vif} />
               )}
+              {this.getRules}
             </tbody>
           </table>
         )}
@@ -559,7 +578,7 @@ const COLUMNS = [
     name: _('vifAllowedIps'),
   },
   {
-    itemRenderer: vif => <AclRulesItems vif={vif} />,
+    itemRenderer: vif => <AclRulesRows vif={vif} />,
     name: _('vifAclRules'),
   },
   {
