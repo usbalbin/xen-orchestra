@@ -318,7 +318,7 @@ class NewAclRuleForm extends BaseComponent {
     protocol: undefined,
     port: undefined,
     ipRange: '',
-    direction: undefined,
+    direction: { label: 'from/to', value: 'from/to' },
   }
 
   get value() {
