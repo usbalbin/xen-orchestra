@@ -1,6 +1,6 @@
 <!-- DO NOT EDIT MANUALLY, THIS FILE HAS BEEN GENERATED -->
 
-# xo-server-sdn-controller
+XO Server plugin that allows the creation of pool-wide and cross-pool private networks and to add/delete network traffic rules on a VIF.
 
 > Creates pool-wide and cross-pool private networks
 

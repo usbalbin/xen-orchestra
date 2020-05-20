@@ -10,7 +10,11 @@ Interconnect your VMs and hosts within a dedicated and secured private network, 
 
 ### How does it work?
 
-Please read the [dedicated devblog on the SDN Controller](https://xen-orchestra.com/blog/xo-sdn-controller/) and its [extension for cross-pool private networks](https://xen-orchestra.com/blog/devblog-3-extending-the-sdn-controller/).
+Please read the devblogs related to the SDN Controller:
+
+- [Creating pool-wide private networks](https://xen-orchestra.com/blog/xo-sdn-controller/)
+- [Extension to create cross-pool private networks](https://xen-orchestra.com/blog/devblog-3-extending-the-sdn-controller/)
+- [Managing network traffic rules on a VIF]()
 
 :::warning
 As VxLAN and GRE are protocols using extra encapsulation, they require extra bits on a network packet. If you create a Global Private Network with a default MTU at `1500`, you won't be able to use it "as is" in your VMs, unless you configure a smaller MTU for each virtual interface, in your VM operating system (eg: `1400`).
@@ -40,6 +44,25 @@ In the network creation view:
   > The term ‘management interface’ is used to indicate the IP-enabled NIC that carries the management traffic.
 - Only 1 encrypted GRE network and 1 encrypted VxLAN network per pool can exist at a time due to Open vSwitch limitation.
   :::
+
+### VIF network traffic rules
+
+This feature requires the OpenFlow port to be opened
+
+In the VM network tab a new column has been added: _Network rules_.
+
+- The _Add rule_ button display a form to add a new rule choosing to:
+  - enable/disable the matching traffic
+  - for a specific protocol (optionnal)
+  - on a specific port (optionnal)
+  - matching a specific IP or IP range (optionnal)
+  - coming from the VIF / going to the VIF / both
+- The _Show rules_ button allow to display all rules for a VIF.
+- Whe the rules are display a button to delete a rule is available.
+
+**_NB:_**
+
+- This feature requires the OpenFlow port (TCP 6653) to be opened. (See [the requirements](#openflow))
 
 ### Configuration
 
