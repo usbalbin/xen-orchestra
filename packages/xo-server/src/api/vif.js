@@ -87,7 +87,7 @@ export async function set({
   }
 
   if (network || mac) {
-    const networkId = (network && network.id) || vif.$network
+    const networkId = network?.id ?? vif.$network
     if (this.user.permission !== 'admin') {
       if (resourceSet !== undefined) {
         await this.checkResourceSetConstraints(resourceSet, this.user.id, [
