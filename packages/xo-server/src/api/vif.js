@@ -87,8 +87,8 @@ export async function set({
   }
 
   if (network || mac) {
-    const networkId = network?.id ?? vif.$network
-    if (this.user.permission !== 'admin') {
+    const networkId = network?.id
+    if (networkId !== undefined && this.user.permission !== 'admin') {
       if (resourceSet !== undefined) {
         await this.checkResourceSetConstraints(resourceSet, this.user.id, [
           networkId,
@@ -102,7 +102,7 @@ export async function set({
 
     const vm = xapi.getObject(vif.$VM)
     mac == null && (mac = vif.MAC)
-    network = xapi.getObject(networkId)
+    network = xapi.getObject(networkId ?? vif.$network)
     attached == null && (attached = vif.attached)
 
     await this.allocIpAddresses(vif.id, null, oldIpAddresses)
